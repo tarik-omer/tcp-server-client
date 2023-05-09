@@ -2,7 +2,9 @@
 #define CUSTOM_STRUCTS_H
 
 #include <netinet/in.h>
-#include <vector>
+#include <map>
+#include "common.h"
+#include <string>
 
 typedef struct
 {
@@ -24,11 +26,6 @@ typedef struct
 
 typedef struct
 {
-    char value[1500];
-} __attribute__((packed)) STRING_T;
-
-typedef struct
-{
     char topic[50];
     uint8_t type;
     char data[1500];
@@ -36,17 +33,24 @@ typedef struct
 
 typedef struct
 {
+    char topic[51];
+    uint8_t type;
+    char data[1500];
+    sockaddr_in client_addr;
+} __attribute__((packed)) udp_message_with_addr;
+
+typedef struct
+{
     char action;
+    char topic[51];
     char client_id[10];
     uint8_t SF;
-    char topic[50];
 } __attribute__((packed)) subscribe_message;
 
 typedef struct
 {
-    char name[50];
-    bool is_sf;
-    std::vector<std::tuple<char*, int, uint8_t>> users;
+    std::string name;
+    std::map<std::string, uint8_t> users;
 } topic_t;
 
 #endif

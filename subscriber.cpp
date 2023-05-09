@@ -16,11 +16,41 @@
 #include "helpers.h"
 #include "common.h"
 
-#define MAX_LEN 50
+#define MAX_LEN 100
+#define MAX_TOPIC_LEN 50
 
-void print_message(udp_message message) {
-    /* Print topic */
-    printf("Received UDP message with topic %s and data type %c.\n", message.topic, message.type);
+void print_message(udp_message_with_addr message) {
+    /* Print under format: <TOPIC> - <DATA_TYPE> - <DATA> */
+    /* Topic - might be 50 characters long, so we need to add a null terminator */
+    char topic[MAX_TOPIC_LEN + 1];
+    memset(topic, 0, MAX_TOPIC_LEN + 1);
+    strncpy(topic, message.topic, MAX_TOPIC_LEN);
+    strcpy(topic + MAX_TOPIC_LEN, "\0");
+
+    printf("%s - ", topic);
+
+    /* Data type */
+    char* data = NULL;
+    switch (message.type) {
+        case 0:
+            printf("INT - ");
+            data = int_to_str(message.data);
+            break;
+        case 1:
+            printf("SHORT_REAL - ");
+            data = short_real_to_str(message.data);
+            break;
+        case 2:
+            printf("FLOAT - ");
+            data = float_to_str(message.data);
+            break;
+        default:
+            printf("STRING - ");
+            data = string_to_str(message.data);
+            break;
+    }
+    /* Print data */
+    printf("%s\n", data);
 }
 
 int main(int argc, char *argv[])
@@ -38,14 +68,20 @@ int main(int argc, char *argv[])
     socklen_t serv_addr_len = sizeof(serv_addr);
     memset(&serv_addr, 0, serv_addr_len);
 
-    /* Create socket */
+    /* Create socket for TCP connection */
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     DIE(sockfd < 0, "socket");
+
+	/* Disable Nagle algorithm */
+    int enable = 1;
+	int rc = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+	DIE(rc < 0, "setsockopt");
+
 
     /* Configure server address */
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(atoi(argv[3]));
-    int rc = inet_aton(argv[2], &serv_addr.sin_addr);
+    rc = inet_aton(argv[2], &serv_addr.sin_addr);
     DIE(rc == 0, "inet_aton");
 
     /* Connect to server */
@@ -55,12 +91,13 @@ int main(int argc, char *argv[])
     /* Send client ID */
     char* id = argv[1];
     subscribe_message message;
-    memcpy(message.client_id, id, strlen(id) + 1);
-    message.action = 'i';
-    message.topic[0] = '\0';
-    message.SF = 0;
-
+    memset(&message, 0, sizeof(subscribe_message));
+    memcpy(message.client_id, id, strlen(id));
     rc = send_all(sockfd, &message, sizeof(subscribe_message));
+
+    /* Send dummy */
+    memset(&message, 0, sizeof(subscribe_message));
+    rc = send_all(sockfd, &message, sizeof(subscribe_message));    
 
     /* Create poll */
     struct pollfd fds[2];
@@ -77,33 +114,30 @@ int main(int argc, char *argv[])
         DIE(rc < 0, "poll");
 
         if (rc == 0) {
-            continue;
+            break;
+            /* Server closed connection */
+            fprintf(stderr, "Server closed connection.\n");
+
         }
 
         /* Check if server sent a message */
         if (fds[0].revents & POLLIN) {
             /* Receive message */
-            void* buffer = malloc(sizeof(udp_message));
-            rc = recv(sockfd, &buffer, sizeof(udp_message), 0);
+            udp_message_with_addr* buffer = (udp_message_with_addr*)malloc(sizeof(udp_message_with_addr));
+            rc = recv_all(sockfd, buffer, sizeof(udp_message_with_addr));
             DIE(rc < 0, "recv");
 
-            /* Check for exit signals */
-            if (*(int*)buffer == -1) {
-                /* Close socket */
-                close(sockfd);
-
-                /* Free buffer */
+            /* Check if server closed connection */
+            if (rc == 0) {
+                fprintf(stderr, "Server closed connection.\n");
                 free(buffer);
                 break;
             }
 
-            /* Convert to UDP message */
-            udp_message message = *(udp_message*)buffer;
-
             /* Print message */
-            print_message(message);
+            print_message(*buffer);
 
-            /* Free buffer */
+            /* Free the message buffer */
             free(buffer);
         }
 
@@ -111,38 +145,48 @@ int main(int argc, char *argv[])
         if (fds[1].revents & POLLIN) {
             /* Read command */
             char buffer[MAX_LEN];
-            scanf("%100s", buffer);
+            memset(buffer, 0, MAX_LEN);
+            fgets(buffer, MAX_LEN - 1, stdin);
+            buffer[strlen(buffer) - 1] = '\0';
+
+            /* Check if command is valid */
+            if (strlen(buffer) == 0) {
+                continue;
+            }
+
+            /* Parse command */
+            char* word = strtok(buffer, " ");
 
             /* Create command */
             subscribe_message command;
+            memset(&command, 0, sizeof(subscribe_message));
 
+            /* Set client ID */
+            memcpy(command.client_id, id, strlen(id) + 1);
 
-            if (strcmp(buffer, "exit") == 0) {
+            if (strcmp(word, "exit") == 0) {
                 /* Exit */
-                /* Announce server */
                 command.action = 'e';
-                command.topic[0] = '\0';
-                command.SF = 0;
-
                 rc = send_all(sockfd, &command, sizeof(subscribe_message));
-
-                /* Close socket */
-                close(sockfd);
                 break;
+            } else if (word == NULL) {
+                /* Invalid command */
+                fprintf(stderr, "Invalid command.\n");
             } else if (strcmp(buffer, "subscribe") == 0) {
                 /* Subscribe */
                 /* Read topic */
-                memset(buffer, 0, MAX_LEN);
-                scanf("%50s", buffer);
-                memcpy(command.topic, buffer, strlen(buffer) + 1);
+                word = strtok(NULL, " ");
+                memcpy(command.topic, word, strlen(word) + 1);
 
                 /* Read SF */
-                memset(buffer, 0, MAX_LEN);
-                scanf("%50s", buffer);
-
-                if (strcmp(buffer, "0") == 0) {
+                word = strtok(NULL, " ");
+                /* Check if SF is given */
+                if (word == NULL) {
+                    /* No SF given */
                     command.SF = 0;
-                } else if (strcmp(buffer, "1") == 0) {
+                } else if (strcmp(word, "0") == 0) {
+                    command.SF = 0;
+                } else if (strcmp(word, "1") == 0) {
                     command.SF = 1;
                 } else {
                     /* Invalid SF */
@@ -155,12 +199,11 @@ int main(int argc, char *argv[])
                 rc = send_all(sockfd, &command, sizeof(subscribe_message));
 
                 printf("Subscribed to topic.\n");
-            } else if (strcmp(buffer, "unsubscribe") == 0) {
+            } else if (strcmp(word, "unsubscribe") == 0) {
                 /* Unsubscribe */
                 /* Read topic */
-                memset(buffer, 0, MAX_LEN);
-                scanf("%50s", buffer);
-                strcpy(command.topic, buffer);
+                word = strtok(NULL, " ");
+                strcpy(command.topic, word);
 
                 /* Announce server */
                 command.action = 'u';
