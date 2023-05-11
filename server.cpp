@@ -91,9 +91,9 @@ void run_server(int listenfd_udp, int listenfd_tcp)
 				
 				if (poll_fds[i].fd == listenfd_tcp) {
 					/* New TCP connection */
-					struct sockaddr_in cli_addr;
-					socklen_t cli_len = sizeof(cli_addr);
-					int newsockfd = accept(listenfd_tcp, (struct sockaddr *)&cli_addr, &cli_len);
+					struct sockaddr_in client_addr;
+					socklen_t client_addr_len = sizeof(client_addr);
+					int newsockfd = accept(listenfd_tcp, (struct sockaddr *)&client_addr, &client_addr_len);
 					DIE(newsockfd < 0, "accept");
 
 					/* Receive client ID */
@@ -131,8 +131,8 @@ void run_server(int listenfd_udp, int listenfd_tcp)
 					}
 					/* Print new client */
 					std::cout << "New client " << client_id
-					<< " connected from " << inet_ntoa(cli_addr.sin_addr)
-					<< ":" << ntohs(cli_addr.sin_port) << "." << std::endl;
+					<< " connected from " << inet_ntoa(client_addr.sin_addr)
+					<< ":" << ntohs(client_addr.sin_port) << "." << std::endl;
 				
 					/* Send stored messages */
 					if (messages.find(client_id) != messages.end()) {
@@ -153,11 +153,11 @@ void run_server(int listenfd_udp, int listenfd_tcp)
 				if (poll_fds[i].fd == listenfd_udp) {
 					/* New UDP message */
 					udp_message message;
-					struct sockaddr_in cli_addr;
-					socklen_t len = sizeof(cli_addr);
+					struct sockaddr_in client_addr;
+					socklen_t len = sizeof(client_addr);
 
 					/* Receive message */
-					rc = recvfrom(listenfd_udp, &message, sizeof(udp_message), 0, (struct sockaddr *)&cli_addr, &len);
+					rc = recvfrom(listenfd_udp, &message, sizeof(udp_message), 0, (struct sockaddr *)&client_addr, &len);
 					DIE(rc < 0, "recvfrom");
 
 					/* Convert topic to string */
@@ -268,8 +268,9 @@ void run_server(int listenfd_udp, int listenfd_tcp)
 						/* Client exits - remove user */
 						for (auto it = users.begin(); it != users.end(); it++) {
 							if (it->second == current_client.fd) {
-								/* Found client */
-								std::cout << "Client " << it->first << " disconnected." << std::endl;
+								/* Found client - remove from map and from stored messages */
+								std::string client_id = it->first;
+								std::cout << "Client " << client_id << " disconnected." << std::endl;
 								users.erase(it);
 								break;
 							}
@@ -305,8 +306,8 @@ int main(int argc, char *argv[])
 
 	/* Parse port */
 	uint16_t port;
-	int rc = sscanf(argv[1], "%hu", &port);
-	DIE(rc != 1, "Port invalid");
+	port = atoi(argv[1]);
+	DIE(port == 0, "atoi");
 
 	/* Create TCP socket */
 	int listenfd_tcp = socket(AF_INET, SOCK_STREAM, 0);
@@ -317,8 +318,14 @@ int main(int argc, char *argv[])
 	DIE(listenfd_udp < 0, "socket");
 
 	/* Server address */
-	struct sockaddr_in serv_addr;
+	struct sockaddr_in server_addr;
 	socklen_t socket_len = sizeof(struct sockaddr_in);
+
+	/* Configure server address */
+	memset(&server_addr, 0, socket_len);
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_port = htons(port);
+	server_addr.sin_addr.s_addr = INADDR_ANY;
 
 	/* Enable the sockets to reuse the address */
 	int enable = 1;
@@ -329,21 +336,15 @@ int main(int argc, char *argv[])
 		perror("setsockopt(SO_REUSEADDR) failed");
 
 	/* Disable Nagle algorithm */
-	rc = setsockopt(listenfd_tcp, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+	int rc = setsockopt(listenfd_tcp, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
 	DIE(rc < 0, "setsockopt");
 
-	/* Configure server address */
-	memset(&serv_addr, 0, socket_len);
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(port);
-	serv_addr.sin_addr.s_addr = INADDR_ANY;
-
 	/* Bind the TCP socket */
-	rc = bind(listenfd_tcp, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
+	rc = bind(listenfd_tcp, (const struct sockaddr *)&server_addr, sizeof(server_addr));
 	DIE(rc < 0, "bind");
 
 	/* Bind the UDP socket */
-	rc = bind(listenfd_udp, (const struct sockaddr *)&serv_addr, sizeof(serv_addr));
+	rc = bind(listenfd_udp, (const struct sockaddr *)&server_addr, sizeof(server_addr));
 	DIE(rc < 0, "bind");
 
 	/* Run the server */

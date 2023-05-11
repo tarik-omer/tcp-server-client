@@ -64,9 +64,9 @@ int main(int argc, char *argv[])
 	setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
     /* Clean buffers */
-    sockaddr_in serv_addr;
-    socklen_t serv_addr_len = sizeof(serv_addr);
-    memset(&serv_addr, 0, serv_addr_len);
+    sockaddr_in server_addr;
+    socklen_t server_addr_len = sizeof(server_addr);
+    memset(&server_addr, 0, server_addr_len);
 
     /* Create socket for TCP connection */
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -79,13 +79,13 @@ int main(int argc, char *argv[])
 
 
     /* Configure server address */
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(atoi(argv[3]));
-    rc = inet_aton(argv[2], &serv_addr.sin_addr);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(atoi(argv[3]));
+    rc = inet_aton(argv[2], &server_addr.sin_addr);
     DIE(rc == 0, "inet_aton");
 
     /* Connect to server */
-    rc = connect(sockfd, (struct sockaddr *)&serv_addr, serv_addr_len);
+    rc = connect(sockfd, (struct sockaddr *)&server_addr, server_addr_len);
     DIE(rc < 0, "connect");
 
     /* Send client ID */
